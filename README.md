@@ -1,3 +1,6 @@
+## 📱 Android App
+[![Download APK](https://img.shields.io/badge/Download-APK-green?style=for-the-badge&logo=android)](https://github.com/shamilslk/ESPController/releases/latest)
+
 # ESPController
 
 A WebSocket + HTTP Arduino library for controlling ESP8266 / ESP32 rover robots from the **ESPController Android app**.
