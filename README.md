@@ -233,7 +233,7 @@ struct MotorPins {
 
 ## Authors
 
-- **Shamil S L K**
+- **Shamil K**
 - **Vismaya P**
 
 ## License
