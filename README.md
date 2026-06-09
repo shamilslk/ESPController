@@ -215,3 +215,11 @@ struct MotorPins {
 ## License
 
 MIT License — see [LICENSE](LICENSE) file for details.
+
+## Installation
+
+1. Click the green **Code** button → **Download ZIP**
+2. In Arduino IDE: **Sketch → Include Library → Add .ZIP Library**
+3. Select the downloaded ZIP
+
+---
