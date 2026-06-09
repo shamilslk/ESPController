@@ -42,6 +42,16 @@ A WebSocket + HTTP Arduino library for controlling ESP8266 / ESP32 rover robots 
 
 ---
 
+## 📸 Screenshots
+
+| D-Pad + Joystick + Camera | IP & Joystick Settings |
+|---------------------------|----------------------|
+| ![](assets/screenshots/d_pad_joystick_camera_feed.jpeg) | ![](assets/screenshots/ip_joystick_settings.jpeg) |
+
+| Camera Settings | Flash Working | Serial Monitor |
+|----------------|---------------|----------------|
+| ![](assets/screenshots/camera_settings.jpeg) | ![](assets/screenshots/flash_working_ss.jpeg) | ![](assets/screenshots/serial_monitor.png) |
+
 ## Installation
 
 ### Arduino Library Manager (recommended)
