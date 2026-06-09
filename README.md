@@ -240,4 +240,28 @@ struct MotorPins {
 
 MIT License — see [LICENSE](LICENSE) file for details.
 
+## Dependencies
+
+Install all of these via **Arduino IDE → Sketch → Include Library → Manage Libraries** before using ESPController.
+
+| Library | Author | Install Name | Required For |
+|---------|--------|--------------|--------------|
+| [WebSockets](https://github.com/Links2004/arduinoWebSockets) | Markus Sattler | `WebSockets` | All boards |
+| [ESP8266WiFi](https://github.com/esp8266/Arduino) | ESP8266 Community | Built-in with ESP8266 board package | ESP8266 only |
+| [ESP8266WebServer](https://github.com/esp8266/Arduino) | ESP8266 Community | Built-in with ESP8266 board package | ESP8266 only |
+| [WiFi](https://github.com/espressif/arduino-esp32) | Espressif | Built-in with ESP32 board package | ESP32 only |
+| [WebServer](https://github.com/espressif/arduino-esp32) | Espressif | Built-in with ESP32 board package | ESP32 only |
+| [ESPmDNS](https://github.com/espressif/arduino-esp32) | Espressif | Built-in with ESP32 board package | ESP32 mDNS |
+| [ESP8266mDNS](https://github.com/esp8266/Arduino) | ESP8266 Community | Built-in with ESP8266 board package | ESP8266 mDNS |
+| [esp_camera](https://github.com/espressif/esp32-camera) | Espressif | Built-in with ESP32 board package | ESP32-CAM only |
+
+### Board Packages (install via Boards Manager)
+
+| Board | Package Name | URL to add in Preferences |
+|-------|-------------|--------------------------|
+| ESP32 / ESP32-CAM | `esp32` by Espressif | `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json` |
+| ESP8266 | `esp8266` by ESP8266 Community | `https://arduino.esp8266.com/stable/package_esp8266com_index.json` |
+
+### Only one manual install needed
+Everything except **WebSockets** comes bundled with the board packages above.
 
