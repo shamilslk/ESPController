@@ -231,6 +231,11 @@ struct MotorPins {
 
 ---
 
+## Authors
+
+- **Shamil S L K**
+- **Vismaya P**
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) file for details.
