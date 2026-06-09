@@ -3,7 +3,9 @@
 
 # ESPController
 
-A WebSocket + HTTP Arduino library for controlling ESP8266 / ESP32 rover robots from the **ESPController Android app**.
+> A universal ESP8266 / ESP32 rover controller library with a Flutter Android app.  
+> Control any ESP-based robot wirelessly via WebSocket with live camera feed, 
+> virtual joystick, D-Pad, and real-time camera streaming.
 
 ---
 
