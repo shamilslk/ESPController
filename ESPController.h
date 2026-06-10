@@ -1,3 +1,16 @@
+/*
+ * ============================================================
+ *  ESPController Library
+ *  Universal ESP32-CAM / ESP32 / ESP8266 WebSocket Controller
+ * ------------------------------------------------------------
+ *  Authors : Shamil K, Vismaya P
+ *  Version : 1.0.0
+ *  GitHub  : https://github.com/shamilslk/ESPController
+ *  License : MIT — free to use, modify and distribute
+ *            with credit to the original authors.
+ * ============================================================
+ */
+
 #ifndef ESPController_h
 #define ESPController_h
 
