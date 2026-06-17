@@ -4,7 +4,7 @@
  *  Universal ESP32-CAM / ESP32 / ESP8266 WebSocket Controller
  * ------------------------------------------------------------
  *  Authors : Shamil K, Vismaya P
- *  Version : 1.0.0
+ *  Version : 2.0.0
  *  GitHub  : https://github.com/shamilslk/ESPController
  *  License : MIT — free to use, modify and distribute
  *            with credit to the original authors.
@@ -14,34 +14,15 @@
 #ifndef ESPController_h
 #define ESPController_h
 
-/*
- * ESPController Library
- * ---------------------
- * A WebSocket + HTTP controller library for ESP8266 / ESP32 rover robots.
- *
- * Features:
- *  - WebSocket control channel (low-latency commands)
- *  - HTTP fallback command endpoint
- *  - Motor control helpers (forward, backward, left, right, stop)
- *  - Joystick X/Y → differential drive mapping
- *  - Dual-motor PWM with adjustable speed
- *  - Built-in HTML controller page served from flash
- *
- * Supported boards:
- *  - ESP8266 (NodeMCU, Wemos D1 Mini, etc.)
- *  - ESP32 / ESP32-CAM
- *
- * Author : ESPController Project
- * License: MIT
- */
-
 #if defined(ESP8266)
   #include <ESP8266WiFi.h>
   #include <ESP8266WebServer.h>
+  #include <ESP8266mDNS.h>
   #include <WebSocketsServer.h>
 #elif defined(ESP32)
   #include <WiFi.h>
   #include <WebServer.h>
+  #include <ESPmDNS.h>
   #include <WebSocketsServer.h>
 #else
   #error "ESPController requires ESP8266 or ESP32"
@@ -50,115 +31,163 @@
 #include <Arduino.h>
 
 // ──────────────────────────────────────────────
-//  Motor channel descriptor
+//  WiFi mode
 // ──────────────────────────────────────────────
-struct MotorPins {
-  uint8_t in1;   // Direction pin A
-  uint8_t in2;   // Direction pin B
-  uint8_t en;    // PWM enable pin (255 = not used / always-on)
+enum class ControllerWiFiMode {
+  AP,
+  STA
 };
 
 // ──────────────────────────────────────────────
-//  Command IDs (must match the Android app)
+//  Motor side selector
 // ──────────────────────────────────────────────
-#define CMD_STOP      'S'
-#define CMD_FORWARD   'F'
-#define CMD_BACKWARD  'B'
-#define CMD_LEFT      'L'
-#define CMD_RIGHT     'R'
-#define CMD_JOYSTICK  'J'   // payload: "J<x>,<y>"  (-100…+100 each)
-#define CMD_SPEED     'V'   // payload: "V<0-255>"
+enum class MotorSide {
+  LEFT,
+  RIGHT
+};
+
+// ──────────────────────────────────────────────
+//  Internal motor channel descriptor
+// ──────────────────────────────────────────────
+struct _MotorChannel {
+  uint8_t in1;
+  uint8_t in2;
+  int8_t  trim;      // -100 … +100 drift correction
+  bool    configured;
+};
 
 // ──────────────────────────────────────────────
 //  ESPController class
 // ──────────────────────────────────────────────
-class ESPController {
+class ESPControllerClass {
 public:
-  // ── Construction ────────────────────────────
-  ESPController();
+  ESPControllerClass();
 
   // ── WiFi / server setup ─────────────────────
   /**
-   * Start in Access Point mode.
-   * @param ssid       AP network name
-   * @param password   AP password (empty = open network)
-   * @param port       HTTP port (default 80)
-   * @param wsPort     WebSocket port (default 81)
+   * Configure WiFi credentials.
+   * Mode defaults to AP (creates hotspot).
+   * Call before begin().
    */
-  void beginAP(const char* ssid,
-               const char* password = "",
-               uint16_t    port     = 80,
-               uint16_t    wsPort   = 81);
+  void setWiFi(const char* ssid,
+               const char* password,
+               ControllerWiFiMode mode = ControllerWiFiMode::AP);
 
   /**
-   * Join an existing WiFi network (STA mode).
-   * Blocks until connected or timeout (ms).
+   * Set mDNS hostname — device reachable at http://<name>.local
+   * Call before begin().
    */
-  bool beginSTA(const char* ssid,
-                const char* password,
-                uint32_t    timeoutMs = 10000,
-                uint16_t    port      = 80,
-                uint16_t    wsPort    = 81);
-
-  /** Call once in loop() to process network events. */
-  void handle();
-
-  // ── Motor configuration ──────────────────────
-  /**
-   * Configure left and right motor pins.
-   * Call before begin*().
-   */
-  void setMotorPins(MotorPins left, MotorPins right);
-
-  /** Set a global speed multiplier (0–255, default 200). */
-  void setSpeed(uint8_t speed);
-  uint8_t getSpeed() const { return _speed; }
-
-  // ── Direct motor commands ────────────────────
-  void motorForward();
-  void motorBackward();
-  void motorLeft();
-  void motorRight();
-  void motorStop();
+  void setMDNS(const char* hostname);
 
   /**
-   * Joystick differential drive.
-   * @param x  Horizontal axis -100 … +100  (right = positive)
-   * @param y  Vertical axis   -100 … +100  (forward = positive)
+   * Start WiFi, WebSocket server and HTTP server.
+   * Call at end of setup().
    */
-  void motorJoystick(int x, int y);
+  void begin(uint16_t httpPort = 80, uint16_t wsPort = 81);
 
-  // ── Callbacks ───────────────────────────────
-  /** Called whenever a command is received (char cmd, String payload). */
-  void onCommand(void (*callback)(char cmd, const String& payload));
+  /**
+   * Drive the network stack — call every loop().
+   */
+  void update();
 
-  /** Called on WebSocket connect / disconnect. */
-  void onClientConnect(void (*callback)(uint8_t clientId));
-  void onClientDisconnect(void (*callback)(uint8_t clientId));
+  // ── Motor pin configuration ──────────────────
+  /** Set GPIO pins for motor A (left). */
+  void setMotorAPins(uint8_t in1, uint8_t in2);
 
-  // ── Status ──────────────────────────────────
-  bool     isConnected()    const;
-  uint8_t  connectedClients() const { return _connectedClients; }
-  IPAddress localIP()       const;
-  String    localIPString() const;
+  /** Set GPIO pins for motor B (right). */
+  void setMotorBPins(uint8_t in1, uint8_t in2);
 
-  // ── Utility ─────────────────────────────────
-  /** Send a string message to a specific WebSocket client. */
+  /** Global speed cap 0–255. Default 200. */
+  void setMaxSpeed(uint8_t speed);
+
+  /**
+   * Correct physical drift on one side.
+   * @param side   MotorSide::LEFT or MotorSide::RIGHT
+   * @param trim   -100 (slow down) … 0 (no correction) … +100 (speed up)
+   */
+  void setMotorTrim(MotorSide side, int8_t trim);
+
+  /**
+   * Motor watchdog — stop motors automatically if no command
+   * is received for this many milliseconds. 0 = disabled.
+   */
+  void setWatchdogTimeout(uint32_t ms);
+
+  /**
+   * Soft acceleration ramp.
+   * @param step    PWM units to change per tick (255 = instant)
+   * @param tickMs  How often (ms) to advance the ramp
+   */
+  void setAcceleration(uint8_t step, uint16_t tickMs);
+
+  // ── Direct motor control ─────────────────────
+  /**
+   * Set motor A speed directly.
+   * @param speed  -255 (full reverse) … +255 (full forward)
+   * Trim, maxSpeed and acceleration ramp are applied automatically.
+   */
+  void setMotorA(int speed);
+
+  /**
+   * Set motor B speed directly.
+   * @param speed  -255 (full reverse) … +255 (full forward)
+   */
+  void setMotorB(int speed);
+
+  /** Gradual stop — respects acceleration ramp. */
+  void stopMotors();
+
+  /** Instant cut — bypasses ramp. Also kills flash LED if present. */
+  void emergencyStop();
+
+  // ── D-Pad callbacks ──────────────────────────
+  // state = HIGH on press, LOW auto-fired after 300 ms
+  void onUp   (void (*cb)(uint8_t state));
+  void onDown (void (*cb)(uint8_t state));
+  void onLeft (void (*cb)(uint8_t state));
+  void onRight(void (*cb)(uint8_t state));
+  // state = HIGH on press only
+  void onStop (void (*cb)(uint8_t state));
+
+  // ── Joystick callbacks ───────────────────────
+  /** Integer joystick: x,y each −255…+255 */
+  void onJoystick   (void (*cb)(int x, int y));
+  /** Raw float joystick: x,y each −1.0…+1.0 */
+  void onJoystickRaw(void (*cb)(float x, float y));
+
+  // ── Connection callbacks ─────────────────────
+  void onControllerConnected   (void (*cb)());
+  void onControllerDisconnected(void (*cb)());
+
+  // ── Battery monitor ──────────────────────────
+  /**
+   * Fire cb when ADC pin voltage drops below threshold.
+   * @param pin        Analog pin number
+   * @param thresholdMv  Threshold in millivolts
+   * @param cb           Callback fired once per crossing
+   */
+  void onLowBattery(uint8_t pin, uint16_t thresholdMv, void (*cb)());
+
+  // ── Status / connectivity ────────────────────
+  int     getRSSI()        const;
+  uint8_t getRSSIQuality() const;
+  String  getStatusJSON()  const;
+  bool    isConnected()    const;
+  IPAddress localIP()      const;
+  String    localIPString()const;
+
+  // ── Messaging ────────────────────────────────
   void sendMessage(uint8_t clientId, const String& msg);
-  /** Broadcast a string message to all connected WebSocket clients. */
-  void broadcast(const String& msg);
+  void broadcast  (const String& msg);
 
 private:
-  // Internal helpers
-  void _setupRoutes();
-  void _handleRoot();
-  void _handleCommand();
-  void _handleStatus();
-  void _onWebSocketEvent(uint8_t num, WStype_t type,
-                         uint8_t* payload, size_t length);
-  void _processCommand(char cmd, const String& payload);
-  void _driveMotor(const MotorPins& m, int8_t direction, uint8_t pwm);
-  int  _clamp(int v, int lo, int hi);
+  // WiFi config
+  const char*        _ssid;
+  const char*        _password;
+  ControllerWiFiMode _wifiMode;
+  const char*        _mdnsName;
+  uint16_t           _httpPort;
+  uint16_t           _wsPort;
 
   // Server objects
 #if defined(ESP8266)
@@ -168,21 +197,68 @@ private:
 #endif
   WebSocketsServer* _ws;
 
-  uint16_t _port;
-  uint16_t _wsPort;
-
   // Motor state
-  MotorPins _leftMotor;
-  MotorPins _rightMotor;
-  bool      _motorsConfigured;
-  uint8_t   _speed;
+  _MotorChannel _motorA;   // left
+  _MotorChannel _motorB;   // right
+  uint8_t  _maxSpeed;
+  int      _targetA;       // desired speed -255…+255
+  int      _targetB;
+  int      _currentA;      // ramped speed
+  int      _currentB;
+  uint8_t  _accelStep;
+  uint16_t _accelTickMs;
+  uint32_t _lastAccelTick;
+
+  // Watchdog
+  uint32_t _watchdogMs;
+  uint32_t _lastCmdTime;
+
+  // RSSI broadcast
+  uint32_t _lastRssiBroadcast;
+
+  // Button auto-release tracking
+  uint32_t _btnPressTime[4];   // 0=Up 1=Down 2=Left 3=Right
+  bool     _btnActive[4];
+
+  // Connected clients
+  uint8_t _connectedClients;
+
+  // Battery monitor
+  uint8_t  _battPin;
+  uint16_t _battThresholdMv;
+  bool     _battTriggered;
 
   // Callbacks
-  void (*_onCommandCb)(char, const String&);
-  void (*_onConnectCb)(uint8_t);
-  void (*_onDisconnectCb)(uint8_t);
+  void (*_cbUp)   (uint8_t);
+  void (*_cbDown) (uint8_t);
+  void (*_cbLeft) (uint8_t);
+  void (*_cbRight)(uint8_t);
+  void (*_cbStop) (uint8_t);
+  void (*_cbJoystick)   (int, int);
+  void (*_cbJoystickRaw)(float, float);
+  void (*_cbConnected)  ();
+  void (*_cbDisconnected)();
+  void (*_cbLowBattery) ();
 
-  uint8_t _connectedClients;
+  // Internal helpers
+  void _setupRoutes();
+  void _handleRoot();
+  void _handleHTTPCmd();
+  void _handleStatus();
+  void _onWsEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length);
+  void _processCommand(const String& raw);
+  void _fireDPad(uint8_t index, void (*cb)(uint8_t));
+  void _driveMotorHW(const _MotorChannel& m, int8_t dir, uint8_t pwm);
+  void _applyRamp();
+  void _checkWatchdog();
+  void _checkBattery();
+  void _checkBtnRelease();
+  void _broadcastRSSI();
+  int  _clamp(int v, int lo, int hi);
+  uint8_t _scalePwm(int speed, int8_t trim);
 };
+
+// Global singleton — use as "Controller.xxx()"
+extern ESPControllerClass Controller;
 
 #endif // ESPController_h
