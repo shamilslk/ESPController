@@ -7,678 +7,549 @@
  * ============================================================
  */
 
+
+// ============================================================
+//  ESPController.cpp
+// ============================================================
 #include "ESPController.h"
 
-// ──────────────────────────────────────────────
-//  Embedded HTML controller page (stored in flash)
-// ──────────────────────────────────────────────
-static const char CONTROLLER_HTML[] PROGMEM = R"rawhtml(
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>ESPController</title>
-<style>
-  :root{--bg:#0d0d0d;--surface:#1a1a2e;--accent:#e94560;--text:#eaeaea;--muted:#888;}
-  *{box-sizing:border-box;margin:0;padding:0;touch-action:none;}
-  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',sans-serif;
-       display:flex;flex-direction:column;height:100vh;overflow:hidden;}
-  #status-bar{background:var(--surface);padding:6px 14px;display:flex;
-              align-items:center;gap:10px;font-size:13px;border-bottom:1px solid #222;}
-  #dot{width:10px;height:10px;border-radius:50%;background:#e94560;}
-  #dot.connected{background:#00e676;}
-  #dot.reconnecting{background:#ffab00;}
-  #main{display:flex;flex:1;overflow:hidden;}
-  #cam-panel{flex:1;background:#000;display:flex;align-items:center;justify-content:center;position:relative;}
-  #cam-panel img{max-width:100%;max-height:100%;object-fit:contain;}
-  #no-cam{color:var(--muted);font-size:14px;text-align:center;}
-  #ctrl-panel{width:200px;background:var(--surface);display:flex;flex-direction:column;
-              align-items:center;justify-content:space-evenly;padding:10px;gap:8px;
-              border-left:1px solid #222;}
-  .dpad{display:grid;grid-template-columns:repeat(3,52px);grid-template-rows:repeat(3,52px);gap:4px;}
-  .dpad-btn{background:#252540;border:none;border-radius:8px;color:var(--text);
-             font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
-  .dpad-btn:active,.dpad-btn.pressed{background:var(--accent);}
-  .dpad-empty{visibility:hidden;}
-  #stop-btn{width:100%;padding:10px;background:#c0392b;border:none;border-radius:10px;
-             color:#fff;font-size:16px;font-weight:700;cursor:pointer;letter-spacing:1px;}
-  #stop-btn:active{background:#e74c3c;}
-  #joystick-zone{width:130px;height:130px;background:#111;border-radius:50%;
-                 border:2px solid #333;position:relative;touch-action:none;}
-  #joystick-knob{width:50px;height:50px;background:var(--accent);border-radius:50%;
-                 position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-                 transition:box-shadow .1s;}
-  #speed-wrap{width:100%;font-size:12px;color:var(--muted);}
-  #speed-wrap input{width:100%;accent-color:var(--accent);}
-</style>
-</head>
-<body>
-<div id="status-bar">
-  <div id="dot"></div>
-  <span id="status-text">Connecting…</span>
-  <span style="margin-left:auto;color:var(--muted)" id="ip-label"></span>
-</div>
-<div id="main">
-  <div id="cam-panel">
-    <div id="no-cam">📷 Camera feed will appear here</div>
-  </div>
-  <div id="ctrl-panel">
-    <div class="dpad">
-      <div class="dpad-empty"></div>
-      <button class="dpad-btn" data-cmd="F">▲</button>
-      <div class="dpad-empty"></div>
-      <button class="dpad-btn" data-cmd="L">◀</button>
-      <button class="dpad-btn" data-cmd="S" style="font-size:14px">■</button>
-      <button class="dpad-btn" data-cmd="R">▶</button>
-      <div class="dpad-empty"></div>
-      <button class="dpad-btn" data-cmd="B">▼</button>
-      <div class="dpad-empty"></div>
-    </div>
-    <div id="joystick-zone"><div id="joystick-knob"></div></div>
-    <button id="stop-btn">■ STOP</button>
-    <div id="speed-wrap">
-      <label>Speed: <span id="speed-val">200</span></label>
-      <input type="range" id="speed-slider" min="50" max="255" value="200">
-    </div>
-  </div>
-</div>
-<script>
-const dot=document.getElementById('dot');
-const statusText=document.getElementById('status-text');
-document.getElementById('ip-label').textContent=location.hostname;
-let ws,reconnectTimer;
-function connect(){
-  ws=new WebSocket('ws://'+location.hostname+':81/');
-  ws.onopen=()=>{dot.className='connected';statusText.textContent='Connected';};
-  ws.onclose=()=>{dot.className='reconnecting';statusText.textContent='Reconnecting…';
-                  reconnectTimer=setTimeout(connect,2000);};
-  ws.onerror=()=>ws.close();
+// ── Singleton ────────────────────────────────────────────────
+ESPController& ESPController::instance() {
+  static ESPController i; return i;
 }
-connect();
-function send(msg){if(ws&&ws.readyState===1)ws.send(msg);}
-document.querySelectorAll('.dpad-btn').forEach(btn=>{
-  btn.addEventListener('pointerdown',e=>{e.preventDefault();btn.classList.add('pressed');send(btn.dataset.cmd);});
-  btn.addEventListener('pointerup',  ()=>{btn.classList.remove('pressed');if(btn.dataset.cmd!=='S')send('S');});
-  btn.addEventListener('pointerleave',()=>{btn.classList.remove('pressed');if(btn.dataset.cmd!=='S')send('S');});
-});
-document.getElementById('stop-btn').addEventListener('click',()=>send('E'));
-const speedSlider=document.getElementById('speed-slider');
-const speedVal=document.getElementById('speed-val');
-speedSlider.addEventListener('input',()=>{speedVal.textContent=speedSlider.value;send('V'+speedSlider.value);});
-const zone=document.getElementById('joystick-zone');
-const knob=document.getElementById('joystick-knob');
-const R=55;let jActive=false,jOrigin={x:0,y:0};
-zone.addEventListener('pointerdown',e=>{
-  jActive=true;zone.setPointerCapture(e.pointerId);
-  const r=zone.getBoundingClientRect();
-  jOrigin={x:r.left+r.width/2,y:r.top+r.height/2};
-  moveKnob(e);
-});
-zone.addEventListener('pointermove',e=>{if(jActive)moveKnob(e);});
-zone.addEventListener('pointerup',resetKnob);
-zone.addEventListener('pointercancel',resetKnob);
-function moveKnob(e){
-  let dx=e.clientX-jOrigin.x,dy=e.clientY-jOrigin.y;
-  const dist=Math.min(Math.hypot(dx,dy),R);
-  const angle=Math.atan2(dy,dx);
-  dx=Math.cos(angle)*dist;dy=Math.sin(angle)*dist;
-  knob.style.left=(50+dx/R*45)+'%';
-  knob.style.top=(50+dy/R*45)+'%';
-  const jx=Math.round(dx/R*255),jy=-Math.round(dy/R*255);
-  send('J'+jx+','+jy);
+ESPController::ESPController() {}
+
+// ── Config ───────────────────────────────────────────────────
+void ESPController::setWiFi(const char* s, const char* p, ControllerWiFiMode m)
+  { _ssid=s; _pass=p; _wifiMode=m; }
+void ESPController::setMDNS(const char* h)
+  { _mdnsOn=true; _mdnsHost=h; }
+void ESPController::setMotorAPins(uint8_t a, uint8_t b)
+  { _aIn1=a; _aIn2=b; _motorsEnabled=true; }
+void ESPController::setMotorBPins(uint8_t a, uint8_t b)
+  { _bIn1=a; _bIn2=b; _motorsEnabled=true; }
+void ESPController::setWatchdogTimeout(unsigned long ms) { _watchdogMs=ms; }
+void ESPController::setMaxSpeed(uint8_t s)               { _maxSpeed=s; }
+void ESPController::setMotorTrim(MotorSide side, int8_t t) {
+  t=constrain(t,-100,100);
+  if(side==MotorSide::LEFT) _trimA=t; else _trimB=t;
 }
-function resetKnob(){jActive=false;knob.style.left='50%';knob.style.top='50%';send('S');}
-</script>
-</body>
-</html>
-)rawhtml";
+void ESPController::setAcceleration(uint8_t step, uint16_t ms)
+  { _accelStep=step; _accelTickMs=ms; }
 
-// ──────────────────────────────────────────────
-//  Singleton instance
-// ──────────────────────────────────────────────
-ESPControllerClass Controller;
-
-// ──────────────────────────────────────────────
-//  Constructor
-// ──────────────────────────────────────────────
-ESPControllerClass::ESPControllerClass()
-  : _ssid(nullptr), _password(nullptr),
-    _wifiMode(ControllerWiFiMode::AP),
-    _mdnsName(nullptr),
-    _httpPort(80), _wsPort(81),
-    _server(nullptr), _ws(nullptr),
-    _maxSpeed(200),
-    _targetA(0), _targetB(0),
-    _currentA(0), _currentB(0),
-    _accelStep(255), _accelTickMs(20),
-    _lastAccelTick(0),
-    _watchdogMs(0), _lastCmdTime(0),
-    _lastRssiBroadcast(0),
-    _connectedClients(0),
-    _battPin(0), _battThresholdMv(0), _battTriggered(false),
-    _cbUp(nullptr), _cbDown(nullptr),
-    _cbLeft(nullptr), _cbRight(nullptr), _cbStop(nullptr),
-    _cbJoystick(nullptr), _cbJoystickRaw(nullptr),
-    _cbConnected(nullptr), _cbDisconnected(nullptr),
-    _cbLowBattery(nullptr)
-{
-  _motorA = {0, 0, 0, false};
-  _motorB = {0, 0, 0, false};
-  for (int i = 0; i < 4; i++) { _btnPressTime[i] = 0; _btnActive[i] = false; }
+// ── Callbacks ────────────────────────────────────────────────
+void ESPController::onUp   (ButtonCallback c){_cbUp   =c;}
+void ESPController::onDown (ButtonCallback c){_cbDown =c;}
+void ESPController::onLeft (ButtonCallback c){_cbLeft =c;}
+void ESPController::onRight(ButtonCallback c){_cbRight=c;}
+void ESPController::onStop (ButtonCallback c){_cbStop =c;}
+void ESPController::onJoystick   (JoystickCallback    c){_cbJoy   =c;}
+void ESPController::onJoystickRaw(JoystickRawCallback c){_cbJoyRaw=c;}
+void ESPController::onControllerConnected   (EventCallback c){_cbCtrlConn   =c;}
+void ESPController::onControllerDisconnected(EventCallback c){_cbCtrlDisconn=c;}
+#ifdef BOARD_ESP32CAM
+void ESPController::onCameraConnected   (EventCallback c){_cbCamConn =c;}
+void ESPController::onCameraDisconnected(EventCallback c){_cbCamDisconn=c;}
+#endif
+void ESPController::onLowBattery(uint8_t pin, uint32_t mv, EventCallback c){
+  _batPin=pin; _batThreshMv=mv; _cbLowBat=c; _batEnabled=true; pinMode(pin,INPUT);
 }
 
-// ──────────────────────────────────────────────
-//  Configuration
-// ──────────────────────────────────────────────
-void ESPControllerClass::setWiFi(const char* ssid, const char* password,
-                                   ControllerWiFiMode mode) {
-  _ssid     = ssid;
-  _password = password;
-  _wifiMode = mode;
-}
+// ════════════════════════════════════════════════════════════
+//  MOTOR WRITE — switches between PWM and digitalWrite
+// ════════════════════════════════════════════════════════════
+void ESPController::_writeMotor(uint8_t p1, uint8_t p2, int speed, int8_t trim) {
+  // Apply trim
+  speed = speed + (speed * trim / 100);
+  // Apply max speed cap
+  speed = constrain(speed, -(int)_maxSpeed, (int)_maxSpeed);
 
-void ESPControllerClass::setMDNS(const char* hostname) {
-  _mdnsName = hostname;
-}
-
-void ESPControllerClass::setMotorAPins(uint8_t in1, uint8_t in2) {
-  _motorA.in1        = in1;
-  _motorA.in2        = in2;
-  _motorA.configured = true;
-  pinMode(in1, OUTPUT);
-  pinMode(in2, OUTPUT);
-}
-
-void ESPControllerClass::setMotorBPins(uint8_t in1, uint8_t in2) {
-  _motorB.in1        = in1;
-  _motorB.in2        = in2;
-  _motorB.configured = true;
-  pinMode(in1, OUTPUT);
-  pinMode(in2, OUTPUT);
-}
-
-void ESPControllerClass::setMaxSpeed(uint8_t speed) {
-  _maxSpeed = speed;
-}
-
-void ESPControllerClass::setMotorTrim(MotorSide side, int8_t trim) {
-  if (side == MotorSide::LEFT)  _motorA.trim = _clamp(trim, -100, 100);
-  else                          _motorB.trim = _clamp(trim, -100, 100);
-}
-
-void ESPControllerClass::setWatchdogTimeout(uint32_t ms) {
-  _watchdogMs = ms;
-}
-
-void ESPControllerClass::setAcceleration(uint8_t step, uint16_t tickMs) {
-  _accelStep   = step;
-  _accelTickMs = tickMs;
-}
-
-// ──────────────────────────────────────────────
-//  begin() — starts everything
-// ──────────────────────────────────────────────
-void ESPControllerClass::begin(uint16_t httpPort, uint16_t wsPort) {
-  _httpPort = httpPort;
-  _wsPort   = wsPort;
-
-  Serial.println(F("[CTRL] Starting ESPController..."));
-
-  // ── WiFi ────────────────────────────────────
-  if (_wifiMode == ControllerWiFiMode::AP) {
-    if (_password && strlen(_password) >= 8) {
-      WiFi.softAP(_ssid, _password);
+#ifdef USE_PWM_MOTORS
+  // ── PWM path ─────────────────────────────────────────────
+  #ifdef BOARD_ESP8266
+    // ESP8266 uses analogWrite (0-1023 range, so map from 255)
+    if(speed > 0){
+      analogWrite(p1, map(speed,0,255,0,1023));
+      analogWrite(p2, 0);
+    } else if(speed < 0){
+      analogWrite(p1, 0);
+      analogWrite(p2, map(-speed,0,255,0,1023));
     } else {
-      if (_password && strlen(_password) > 0) {
-        Serial.println(F("[WIFI] Warning: password < 8 chars, starting open AP"));
-      }
-      WiFi.softAP(_ssid);
+      analogWrite(p1, 0);
+      analogWrite(p2, 0);
     }
-    Serial.print(F("[WIFI] AP IP: "));
-    Serial.println(WiFi.softAPIP());
-  } else {
-    WiFi.begin(_ssid, _password);
-    Serial.print(F("[WIFI] Connecting to "));
-    Serial.print(_ssid);
-    uint32_t start = millis();
-    while (WiFi.status() != WL_CONNECTED) {
-      if (millis() - start > 15000) {
-        Serial.println(F("\n[WIFI] Connection timed out"));
-        break;
-      }
-      delay(250);
-      Serial.print('.');
+  #else
+    // ESP32 / ESP32-CAM use ledcWrite
+    if(speed > 0){
+      ledcWrite(p1, speed);
+      ledcWrite(p2, 0);
+    } else if(speed < 0){
+      ledcWrite(p1, 0);
+      ledcWrite(p2, -speed);
+    } else {
+      ledcWrite(p1, 0);
+      ledcWrite(p2, 0);
     }
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.print(F("\n[WIFI] STA IP: "));
-      Serial.println(WiFi.localIP());
-    }
-  }
+  #endif
 
-  // ── mDNS ────────────────────────────────────
-  if (_mdnsName) {
-    if (MDNS.begin(_mdnsName)) {
-      Serial.print(F("[mDNS] Reachable at http://"));
-      Serial.print(_mdnsName);
-      Serial.println(F(".local"));
-    }
-  }
-
-  // ── HTTP server ─────────────────────────────
-#if defined(ESP8266)
-  _server = new ESP8266WebServer(_httpPort);
 #else
-  _server = new WebServer(_httpPort);
-#endif
-  _setupRoutes();
-  _server->begin();
-  Serial.printf("[HTTP] Server ready on port %u\n", _httpPort);
-
-  // ── WebSocket server ─────────────────────────
-  _ws = new WebSocketsServer(_wsPort);
-  _ws->begin();
-  _ws->onEvent([this](uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
-    _onWsEvent(num, type, payload, length);
-  });
-  Serial.printf("[WS] Server ready on port %u\n", _wsPort);
-
-  // ── Motor PWM ────────────────────────────────
-  if (_motorA.configured || _motorB.configured) {
-    Serial.println(F("[MOTORS] PWM ready"));
-  }
-
-  _lastCmdTime = millis();
-  Serial.println(F("[CTRL] Ready"));
-}
-
-// ──────────────────────────────────────────────
-//  update() — call every loop()
-// ──────────────────────────────────────────────
-void ESPControllerClass::update() {
-  if (_server) _server->handleClient();
-  if (_ws)     _ws->loop();
-
-#if defined(ESP8266)
-  if (_mdnsName) MDNS.update();
-#endif
-
-  _applyRamp();
-  _checkWatchdog();
-  _checkBtnRelease();
-  _checkBattery();
-  _broadcastRSSI();
-}
-
-// ──────────────────────────────────────────────
-//  HTTP routes
-// ──────────────────────────────────────────────
-void ESPControllerClass::_setupRoutes() {
-  _server->on("/",        HTTP_GET, [this]() { _handleRoot(); });
-  _server->on("/cmd",     HTTP_GET, [this]() { _handleHTTPCmd(); });
-  _server->on("/status",  HTTP_GET, [this]() { _handleStatus(); });
-  // Convenience REST endpoints
-  _server->on("/up",      HTTP_GET, [this]() { _processCommand("F"); _server->send(200, "text/plain", "OK"); });
-  _server->on("/down",    HTTP_GET, [this]() { _processCommand("B"); _server->send(200, "text/plain", "OK"); });
-  _server->on("/left",    HTTP_GET, [this]() { _processCommand("L"); _server->send(200, "text/plain", "OK"); });
-  _server->on("/right",   HTTP_GET, [this]() { _processCommand("R"); _server->send(200, "text/plain", "OK"); });
-  _server->on("/stop",    HTTP_GET, [this]() { _processCommand("S"); _server->send(200, "text/plain", "OK"); });
-  _server->onNotFound([this]() { _server->send(404, "text/plain", "Not found"); });
-}
-
-void ESPControllerClass::_handleRoot() {
-  _server->send_P(200, "text/html", CONTROLLER_HTML);
-}
-
-void ESPControllerClass::_handleHTTPCmd() {
-  if (!_server->hasArg("c")) {
-    _server->send(400, "text/plain", "Missing ?c=");
-    return;
-  }
-  String raw = _server->arg("c");
-  if (raw.length() == 0) {
-    _server->send(400, "text/plain", "Empty command");
-    return;
-  }
-  _processCommand(raw);
-  _server->send(200, "text/plain", "OK");
-}
-
-void ESPControllerClass::_handleStatus() {
-  _server->send(200, "application/json", getStatusJSON());
-}
-
-// ──────────────────────────────────────────────
-//  WebSocket event handler
-// ──────────────────────────────────────────────
-void ESPControllerClass::_onWsEvent(uint8_t num, WStype_t type,
-                                     uint8_t* payload, size_t length) {
-  switch (type) {
-    case WStype_CONNECTED:
-      _connectedClients++;
-      Serial.printf("[CTRL] App connected! (client #%u)\n", num);
-      if (_cbConnected) _cbConnected();
-      break;
-
-    case WStype_DISCONNECTED:
-      if (_connectedClients > 0) _connectedClients--;
-      Serial.printf("[CTRL] App disconnected (client #%u)\n", num);
-      emergencyStop();                           // safety: cut motors immediately
-      if (_cbDisconnected) _cbDisconnected();
-      break;
-
-    case WStype_TEXT:
-      if (length > 0) {
-        // Use String constructor with explicit length — no buffer overflow
-        String raw = String((char*)payload, length);
-        _processCommand(raw);
-      }
-      break;
-
-    default:
-      break;
-  }
-}
-
-// ──────────────────────────────────────────────
-//  Command dispatcher
-// ──────────────────────────────────────────────
-void ESPControllerClass::_processCommand(const String& raw) {
-  if (raw.length() == 0) return;
-
-  _lastCmdTime = millis();   // feed the watchdog
-
-  char    cmd     = raw[0];
-  String  payload = raw.length() > 1 ? raw.substring(1) : String("");
-
-  Serial.printf("[CMD] %c  payload='%s'\n", cmd, payload.c_str());
-
-  switch (cmd) {
-    // ── D-Pad ──────────────────────────────────
-    case 'F':
-      _fireDPad(0, _cbUp);
-      break;
-
-    case 'B':
-      _fireDPad(1, _cbDown);
-      break;
-
-    case 'L':
-      _fireDPad(2, _cbLeft);
-      break;
-
-    case 'R':
-      _fireDPad(3, _cbRight);
-      break;
-
-    case 'S':
-      // Release all active buttons
-      for (int i = 0; i < 4; i++) _btnActive[i] = false;
-      if (_cbStop) _cbStop(HIGH);
-      break;
-
-    // ── Emergency stop ─────────────────────────
-    case 'E':
-      emergencyStop();
-      break;
-
-    // ── Joystick ───────────────────────────────
-    case 'J': {
-      int comma = payload.indexOf(',');
-      if (comma > 0) {
-        int x = payload.substring(0, comma).toInt();
-        int y = payload.substring(comma + 1).toInt();
-        x = _clamp(x, -255, 255);
-        y = _clamp(y, -255, 255);
-        if (_cbJoystick)    _cbJoystick(x, y);
-        if (_cbJoystickRaw) _cbJoystickRaw(x / 255.0f, y / 255.0f);
-      }
-      break;
-    }
-
-    // ── Speed ──────────────────────────────────
-    case 'V':
-      _maxSpeed = (uint8_t)_clamp(payload.toInt(), 0, 255);
-      break;
-
-    default:
-      break;
-  }
-}
-
-// ──────────────────────────────────────────────
-//  D-Pad button press with auto-release tracking
-// ──────────────────────────────────────────────
-void ESPControllerClass::_fireDPad(uint8_t index, void (*cb)(uint8_t)) {
-  _btnActive[index]    = true;
-  _btnPressTime[index] = millis();
-  if (cb) cb(HIGH);
-}
-
-void ESPControllerClass::_checkBtnRelease() {
-  const uint32_t AUTO_RELEASE_MS = 300;
-  uint32_t now = millis();
-  void (*cbs[4])(uint8_t) = { _cbUp, _cbDown, _cbLeft, _cbRight };
-  for (int i = 0; i < 4; i++) {
-    if (_btnActive[i] && (now - _btnPressTime[i] >= AUTO_RELEASE_MS)) {
-      _btnActive[i] = false;
-      if (cbs[i]) cbs[i](LOW);
-    }
-  }
-}
-
-// ──────────────────────────────────────────────
-//  Direct motor control (public API)
-// ──────────────────────────────────────────────
-void ESPControllerClass::setMotorA(int speed) {
-  _targetA = _clamp(speed, -255, 255);
-}
-
-void ESPControllerClass::setMotorB(int speed) {
-  _targetB = _clamp(speed, -255, 255);
-}
-
-void ESPControllerClass::stopMotors() {
-  _targetA = 0;
-  _targetB = 0;
-}
-
-void ESPControllerClass::emergencyStop() {
-  _targetA  = 0; _targetB  = 0;
-  _currentA = 0; _currentB = 0;
-  _driveMotorHW(_motorA, 0, 0);
-  _driveMotorHW(_motorB, 0, 0);
-}
-
-// ──────────────────────────────────────────────
-//  Acceleration ramp
-// ──────────────────────────────────────────────
-void ESPControllerClass::_applyRamp() {
-  uint32_t now = millis();
-  if (now - _lastAccelTick < _accelTickMs) return;
-  _lastAccelTick = now;
-
-  auto step = [this](int current, int target) -> int {
-    if (_accelStep >= 255) return target;
-    int diff = target - current;
-    if (abs(diff) <= _accelStep) return target;
-    return current + (_accelStep * (diff > 0 ? 1 : -1));
-  };
-
-  _currentA = step(_currentA, _targetA);
-  _currentB = step(_currentB, _targetB);
-
-  // Apply maxSpeed cap and trim, then drive hardware
-  int8_t  dirA = (_currentA > 0) ? 1 : (_currentA < 0 ? -1 : 0);
-  int8_t  dirB = (_currentB > 0) ? 1 : (_currentB < 0 ? -1 : 0);
-  uint8_t pwmA = _scalePwm(abs(_currentA), _motorA.trim);
-  uint8_t pwmB = _scalePwm(abs(_currentB), _motorB.trim);
-
-  _driveMotorHW(_motorA, dirA, pwmA);
-  _driveMotorHW(_motorB, dirB, pwmB);
-}
-
-// Scale raw speed (0–255) by maxSpeed and trim
-uint8_t ESPControllerClass::_scalePwm(int speed, int8_t trim) {
-  float scaled = (float)speed * _maxSpeed / 255.0f;
-  scaled *= (1.0f + trim / 100.0f);
-  return (uint8_t)_clamp((int)scaled, 0, 255);
-}
-
-// ──────────────────────────────────────────────
-//  Low-level motor hardware driver
-//  direction: +1=forward, -1=backward, 0=coast
-// ──────────────────────────────────────────────
-void ESPControllerClass::_driveMotorHW(const _MotorChannel& m, int8_t direction, uint8_t pwm) {
-  if (!m.configured) return;
-  switch (direction) {
-    case  1: digitalWrite(m.in1, HIGH); digitalWrite(m.in2, LOW);  break;
-    case -1: digitalWrite(m.in1, LOW);  digitalWrite(m.in2, HIGH); break;
-    default: digitalWrite(m.in1, LOW);  digitalWrite(m.in2, LOW);  pwm = 0; break;
-  }
-  // PWM is handled via setMotorA/B target; the EN pin is always-on here.
-  // If you have a separate EN pin, call analogWrite(enPin, pwm) here.
-  (void)pwm;
-}
-
-// ──────────────────────────────────────────────
-//  Watchdog — stop motors if app goes silent
-// ──────────────────────────────────────────────
-void ESPControllerClass::_checkWatchdog() {
-  if (_watchdogMs == 0) return;
-  if (millis() - _lastCmdTime > _watchdogMs) {
-    if (_targetA != 0 || _targetB != 0) {
-      Serial.println(F("[CTRL] Watchdog timeout — stopping motors"));
-      stopMotors();
-    }
-  }
-}
-
-// ──────────────────────────────────────────────
-//  Battery monitor
-// ──────────────────────────────────────────────
-void ESPControllerClass::onLowBattery(uint8_t pin, uint16_t thresholdMv, void (*cb)()) {
-  _battPin         = pin;
-  _battThresholdMv = thresholdMv;
-  _cbLowBattery    = cb;
-  _battTriggered   = false;
-}
-
-void ESPControllerClass::_checkBattery() {
-  if (!_cbLowBattery || _battThresholdMv == 0) return;
-  // Only check every 5 seconds to avoid ADC noise
-  static uint32_t lastCheck = 0;
-  if (millis() - lastCheck < 5000) return;
-  lastCheck = millis();
-
-  int raw = analogRead(_battPin);
-  // ESP32 ADC: 12-bit 0–4095 = 0–3300mV (3.3V ref)
-  // ESP8266 ADC: 10-bit 0–1023 = 0–3300mV
-#if defined(ESP32)
-  uint16_t mv = (uint16_t)((uint32_t)raw * 3300 / 4095);
-#else
-  uint16_t mv = (uint16_t)((uint32_t)raw * 3300 / 1023);
-#endif
-
-  if (mv < _battThresholdMv) {
-    if (!_battTriggered) {
-      _battTriggered = true;
-      Serial.printf("[BATT] Low battery! %u mV\n", mv);
-      _cbLowBattery();
-    }
+  // ── Simple digitalWrite path ─────────────────────────────
+  // No speed control — just direction on/off
+  if(speed > 0){
+    digitalWrite(p1, HIGH);
+    digitalWrite(p2, LOW);
+  } else if(speed < 0){
+    digitalWrite(p1, LOW);
+    digitalWrite(p2, HIGH);
   } else {
-    _battTriggered = false;   // re-arm once voltage recovers
+    digitalWrite(p1, LOW);
+    digitalWrite(p2, LOW);
   }
+#endif
 }
 
-// ──────────────────────────────────────────────
-//  RSSI broadcast every 3 seconds
-// ──────────────────────────────────────────────
-void ESPControllerClass::_broadcastRSSI() {
-  if (_connectedClients == 0) return;
-  if (millis() - _lastRssiBroadcast < 3000) return;
-  _lastRssiBroadcast = millis();
-
-  int     rssi    = getRSSI();
-  uint8_t quality = getRSSIQuality();
-  String  msg     = "rssi:" + String(rssi) + ",q:" + String(quality);
-  broadcast(msg);
+// ── Motor helpers ────────────────────────────────────────────
+void ESPController::setMotorA(int speed){
+  if(!_motorsEnabled) return;
+  _targetA=constrain(speed,-255,255);
+  if(_accelStep>=255){
+    _currentA=_targetA;
+    _writeMotor(_aIn1,_aIn2,_currentA,_trimA);
+  }
+  _lastCmdTime=millis();
+}
+void ESPController::setMotorB(int speed){
+  if(!_motorsEnabled) return;
+  _targetB=constrain(speed,-255,255);
+  if(_accelStep>=255){
+    _currentB=_targetB;
+    _writeMotor(_bIn1,_bIn2,_currentB,_trimB);
+  }
+  _lastCmdTime=millis();
+}
+void ESPController::stopMotors(){ setMotorA(0); setMotorB(0); }
+void ESPController::emergencyStop(){
+  _targetA=_targetB=_currentA=_currentB=0;
+  if(_motorsEnabled){
+    _writeMotor(_aIn1,_aIn2,0,0);
+    _writeMotor(_bIn1,_bIn2,0,0);
+  }
+#ifdef HAS_FLASH_LED
+  _setFlash(0);
+#endif
+  _lastCmdTime=millis();
 }
 
-// ──────────────────────────────────────────────
-//  Callbacks
-// ──────────────────────────────────────────────
-void ESPControllerClass::onUp   (void (*cb)(uint8_t)) { _cbUp    = cb; }
-void ESPControllerClass::onDown (void (*cb)(uint8_t)) { _cbDown  = cb; }
-void ESPControllerClass::onLeft (void (*cb)(uint8_t)) { _cbLeft  = cb; }
-void ESPControllerClass::onRight(void (*cb)(uint8_t)) { _cbRight = cb; }
-void ESPControllerClass::onStop (void (*cb)(uint8_t)) { _cbStop  = cb; }
-
-void ESPControllerClass::onJoystick(void (*cb)(int, int)) {
-  _cbJoystick = cb;
+// ── Connectivity ─────────────────────────────────────────────
+int     ESPController::getRSSI()        { return WiFi.RSSI(); }
+uint8_t ESPController::getRSSIQuality() {
+  int r=getRSSI();
+  if(r>=-50) return 100; if(r<=-100) return 0;
+  return (uint8_t)(2*(r+100));
 }
-void ESPControllerClass::onJoystickRaw(void (*cb)(float, float)) {
-  _cbJoystickRaw = cb;
-}
-void ESPControllerClass::onControllerConnected(void (*cb)()) {
-  _cbConnected = cb;
-}
-void ESPControllerClass::onControllerDisconnected(void (*cb)()) {
-  _cbDisconnected = cb;
-}
-
-// ──────────────────────────────────────────────
-//  Status / connectivity
-// ──────────────────────────────────────────────
-bool ESPControllerClass::isConnected() const {
-  return (WiFi.status() == WL_CONNECTED) || (WiFi.softAPgetStationNum() > 0);
-}
-
-IPAddress ESPControllerClass::localIP() const {
-  if (WiFi.status() == WL_CONNECTED) return WiFi.localIP();
-  return WiFi.softAPIP();
-}
-
-String ESPControllerClass::localIPString() const {
-  return localIP().toString();
-}
-
-int ESPControllerClass::getRSSI() const {
-  return WiFi.RSSI();
-}
-
-uint8_t ESPControllerClass::getRSSIQuality() const {
-  int rssi = getRSSI();
-  if (rssi <= -100) return 0;
-  if (rssi >= -50)  return 100;
-  return (uint8_t)(2 * (rssi + 100));
-}
-
-String ESPControllerClass::getStatusJSON() const {
-  String json = "{";
-  json += "\"clients\":"  + String(_connectedClients);
-  json += ",\"speed\":"   + String(_maxSpeed);
-  json += ",\"ip\":\""    + localIPString() + "\"";
-  json += ",\"rssi\":"    + String(getRSSI());
-  json += ",\"rssiQ\":"   + String(getRSSIQuality());
-  json += "}";
+String ESPController::getStatusJSON(){
+  String ip;
+#ifdef BOARD_ESP8266
+  ip = (_wifiMode==ControllerWiFiMode::AP)
+         ? WiFi.softAPIP().toString()
+         : WiFi.localIP().toString();
+#else
+  ip = (_wifiMode==ControllerWiFiMode::AP)
+         ? WiFi.softAPIP().toString()
+         : WiFi.localIP().toString();
+#endif
+  String json = "{\"ip\":\"" + ip
+    + "\",\"rssi\":"        + String(getRSSI())
+    + ",\"rssi_quality\":"  + String(getRSSIQuality())
+    + ",\"ctrl_clients\":"  + String(_wsCtrl ? _wsCtrl->count() : 0)
+#ifdef BOARD_ESP32CAM
+    + ",\"cam_clients\":"   + String(_wsCamera ? _wsCamera->count() : 0)
+    + ",\"fps\":"           + String(1000/_frameInterval)
+#endif
+#ifdef HAS_FLASH_LED
+    + ",\"flash\":"         + String(_flashBrightness)
+#endif
+    + ",\"max_speed\":"     + String(_maxSpeed)
+    + "}";
   return json;
 }
 
-// ──────────────────────────────────────────────
-//  Messaging
-// ──────────────────────────────────────────────
-void ESPControllerClass::sendMessage(uint8_t clientId, const String& msg) {
-  if (_ws) _ws->sendTXT(clientId, msg);
+// ════════════════════════════════════════════════════════════
+//  FLASH LED  (only compiled for boards that have it)
+// ════════════════════════════════════════════════════════════
+#ifdef HAS_FLASH_LED
+void ESPController::_setFlash(int b){
+  _flashBrightness=constrain(b,0,255);
+#ifdef BOARD_ESP8266
+  analogWrite(FLASH_LED_PIN, map(_flashBrightness,0,255,0,1023));
+#else
+  ledcWrite(FLASH_LED_PIN, _flashBrightness);
+#endif
+}
+#endif
+
+// ════════════════════════════════════════════════════════════
+//  STATUS LED  (only compiled for boards that have it)
+// ════════════════════════════════════════════════════════════
+#ifdef HAS_STATUS_LED
+void ESPController::_blinkStatus(int n, int ms){
+  for(int i=0;i<n;i++){
+    digitalWrite(STATUS_LED_PIN,HIGH); delay(ms);
+    digitalWrite(STATUS_LED_PIN,LOW);  delay(ms);
+  }
+}
+#endif
+
+// ════════════════════════════════════════════════════════════
+//  CAMERA  (only compiled for ESP32-CAM)
+// ════════════════════════════════════════════════════════════
+#ifdef BOARD_ESP32CAM
+bool ESPController::_initCamera(){
+  camera_config_t c={};
+  c.ledc_channel=LEDC_CHANNEL_0; c.ledc_timer=LEDC_TIMER_0;
+  c.pin_d0=CAM_PIN_Y2;  c.pin_d1=CAM_PIN_Y3;
+  c.pin_d2=CAM_PIN_Y4;  c.pin_d3=CAM_PIN_Y5;
+  c.pin_d4=CAM_PIN_Y6;  c.pin_d5=CAM_PIN_Y7;
+  c.pin_d6=CAM_PIN_Y8;  c.pin_d7=CAM_PIN_Y9;
+  c.pin_xclk=CAM_PIN_XCLK; c.pin_pclk=CAM_PIN_PCLK;
+  c.pin_vsync=CAM_PIN_VSYNC; c.pin_href=CAM_PIN_HREF;
+  c.pin_sscb_sda=CAM_PIN_SIOD; c.pin_sscb_scl=CAM_PIN_SIOC;
+  c.pin_pwdn=CAM_PIN_PWDN; c.pin_reset=CAM_PIN_RESET;
+  c.xclk_freq_hz=20000000; c.pixel_format=PIXFORMAT_JPEG;
+  c.frame_size=FRAMESIZE_QVGA; c.jpeg_quality=12; c.fb_count=2;
+  esp_err_t err=esp_camera_init(&c);
+  if(err!=ESP_OK){ Serial.printf("[CAM] failed 0x%x\n",err); return false; }
+  _sensor=esp_camera_sensor_get();
+  Serial.println("[CAM] OK");
+  return true;
+}
+void ESPController::_sendFrame(){
+  if(!_wsCamera||_wsCamera->count()==0) return;
+  camera_fb_t* fb=esp_camera_fb_get(); if(!fb) return;
+  _wsCamera->binaryAll(fb->buf,fb->len);
+  esp_camera_fb_return(fb);
+}
+#endif
+
+// ── Battery ──────────────────────────────────────────────────
+void ESPController::_checkBattery(){
+  if(!_batEnabled||_batAlertFired) return;
+  unsigned long now=millis();
+  if(now-_lastBatCheck<5000) return;
+  _lastBatCheck=now;
+#ifdef BOARD_ESP8266
+  // ESP8266 ADC is 10-bit, 1.0V reference
+  uint32_t mv=(analogRead(_batPin)*1000UL)/1023UL;
+#else
+  // ESP32 ADC is 12-bit, 3.3V reference
+  uint32_t mv=(analogRead(_batPin)*3300UL)/4095UL;
+#endif
+  if(mv<=_batThreshMv){ _batAlertFired=true; if(_cbLowBat) _cbLowBat(); }
 }
 
-void ESPControllerClass::broadcast(const String& msg) {
-  if (_ws) _ws->broadcastTXT(msg);
+// ── Button auto-release ───────────────────────────────────────
+void ESPController::_checkButtonReleases(){
+  unsigned long now=millis();
+  if(_upActive    && now-_upLastMs    >BUTTON_RELEASE_MS){ _upActive   =false; if(_cbUp)    _cbUp(LOW);    }
+  if(_downActive  && now-_downLastMs  >BUTTON_RELEASE_MS){ _downActive =false; if(_cbDown)  _cbDown(LOW);  }
+  if(_leftActive  && now-_leftLastMs  >BUTTON_RELEASE_MS){ _leftActive =false; if(_cbLeft)  _cbLeft(LOW);  }
+  if(_rightActive && now-_rightLastMs >BUTTON_RELEASE_MS){ _rightActive=false; if(_cbRight) _cbRight(LOW); }
 }
 
-// ──────────────────────────────────────────────
-//  Utility
-// ──────────────────────────────────────────────
-int ESPControllerClass::_clamp(int v, int lo, int hi) {
-  return v < lo ? lo : (v > hi ? hi : v);
+// ════════════════════════════════════════════════════════════
+//  COMMAND PARSER
+// ════════════════════════════════════════════════════════════
+void ESPController::_handleCommand(const String& msg){
+  Serial.printf("[CMD] %s\n", msg.c_str());
+  _lastCmdTime=millis();
+  unsigned long now=millis();
+
+  if(msg=="up"){
+    _upActive=true; _upLastMs=now;
+    if(_cbUp) _cbUp(HIGH); return;
+  }
+  if(msg=="down"){
+    _downActive=true; _downLastMs=now;
+    if(_cbDown) _cbDown(HIGH); return;
+  }
+  if(msg=="left"){
+    _leftActive=true; _leftLastMs=now;
+    if(_cbLeft) _cbLeft(HIGH); return;
+  }
+  if(msg=="right"){
+    _rightActive=true; _rightLastMs=now;
+    if(_cbRight) _cbRight(HIGH); return;
+  }
+  if(msg=="stop"){
+    _upActive=_downActive=_leftActive=_rightActive=false;
+    if(_cbStop) _cbStop(HIGH); return;
+  }
+  if(msg.startsWith("joy:")){
+    String xy=msg.substring(4); int c=xy.indexOf(',');
+    if(c>0){
+      float fx=xy.substring(0,c).toFloat();
+      float fy=xy.substring(c+1).toFloat();
+      if(_cbJoyRaw) _cbJoyRaw(fx,fy);
+      if(_cbJoy)    _cbJoy((int)(fx*255),(int)(fy*255));
+    }return;
+  }
+#ifdef HAS_FLASH_LED
+  if(msg.startsWith("flash:")){
+    _setFlash(msg.substring(6).toInt()); return;
+  }
+#endif
+#ifdef BOARD_ESP32CAM
+  if(msg.startsWith("cam:")){
+    if(!_sensor) return;
+    String kv=msg.substring(4); int eq=kv.indexOf('='); if(eq<0)return;
+    String key=kv.substring(0,eq), val=kv.substring(eq+1);
+    if(key=="fps")          _frameInterval=1000/constrain(val.toInt(),5,30);
+    else if(key=="quality") _sensor->set_quality(_sensor,constrain(val.toInt(),5,30));
+    else if(key=="res"){
+      if(val=="QVGA")      _sensor->set_framesize(_sensor,FRAMESIZE_QVGA);
+      else if(val=="VGA")  _sensor->set_framesize(_sensor,FRAMESIZE_VGA);
+      else if(val=="SVGA") _sensor->set_framesize(_sensor,FRAMESIZE_SVGA);
+    }return;
+  }
+#endif
+}
+
+// ════════════════════════════════════════════════════════════
+//  WEBSOCKET HANDLERS
+// ════════════════════════════════════════════════════════════
+void ESPController::_onCtrlEvent(AsyncWebSocket* srv,
+    AsyncWebSocketClient* client, AwsEventType type,
+    void* arg, uint8_t* data, size_t len){
+  ESPController& c=instance();
+  if(type==WS_EVT_CONNECT){
+    Serial.println("[CTRL] App connected!");
+    if(c._cbCtrlConn) c._cbCtrlConn();
+  } else if(type==WS_EVT_DISCONNECT){
+    Serial.println("[CTRL] App disconnected — outputs stopped.");
+    c.emergencyStop();
+    c._upActive=c._downActive=c._leftActive=c._rightActive=false;
+    if(c._cbCtrlDisconn) c._cbCtrlDisconn();
+  } else if(type==WS_EVT_DATA){
+    AwsFrameInfo* info=(AwsFrameInfo*)arg;
+    if(info->opcode==WS_TEXT){
+      String msg=""; msg.reserve(len);
+      for(size_t i=0;i<len;i++) msg+=(char)data[i];
+      msg.trim(); c._handleCommand(msg);
+    }
+  }
+}
+
+#ifdef BOARD_ESP32CAM
+void ESPController::_onCamEvent(AsyncWebSocket* srv,
+    AsyncWebSocketClient* client, AwsEventType type,
+    void* arg, uint8_t* data, size_t len){
+  ESPController& c=instance();
+  if(type==WS_EVT_CONNECT){
+    Serial.println("[CAM] Camera viewer connected!");
+    if(c._cbCamConn) c._cbCamConn();
+  } else if(type==WS_EVT_DISCONNECT){
+    Serial.println("[CAM] Camera viewer disconnected.");
+    if(c._cbCamDisconn) c._cbCamDisconn();
+  }
+}
+#endif
+
+// ════════════════════════════════════════════════════════════
+//  BEGIN
+// ════════════════════════════════════════════════════════════
+bool ESPController::begin(){
+  Serial.println("[CTRL] Starting ESPController...");
+
+#ifdef HAS_STATUS_LED
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  digitalWrite(STATUS_LED_PIN, LOW);
+#endif
+
+  // ── Flash LED init ──
+#ifdef HAS_FLASH_LED
+  #ifdef BOARD_ESP8266
+    pinMode(FLASH_LED_PIN, OUTPUT);
+    analogWrite(FLASH_LED_PIN, 0);
+  #else
+    ledcAttach(FLASH_LED_PIN, 5000, 8);
+    _setFlash(0); _setFlash(180); delay(200); _setFlash(0);
+  #endif
+#endif
+
+  // ── Motor pin init ──
+  if(_motorsEnabled){
+#ifdef USE_PWM_MOTORS
+  #ifdef BOARD_ESP8266
+    pinMode(_aIn1,OUTPUT); pinMode(_aIn2,OUTPUT);
+    pinMode(_bIn1,OUTPUT); pinMode(_bIn2,OUTPUT);
+    analogWrite(_aIn1,0); analogWrite(_aIn2,0);
+    analogWrite(_bIn1,0); analogWrite(_bIn2,0);
+  #else
+    // ESP32: LEDC attach
+    ledcAttach(_aIn1, MOTOR_LEDC_FREQ, MOTOR_LEDC_RES);
+    ledcAttach(_aIn2, MOTOR_LEDC_FREQ, MOTOR_LEDC_RES);
+    ledcAttach(_bIn1, MOTOR_LEDC_FREQ, MOTOR_LEDC_RES);
+    ledcAttach(_bIn2, MOTOR_LEDC_FREQ, MOTOR_LEDC_RES);
+    ledcWrite(_aIn1,0); ledcWrite(_aIn2,0);
+    ledcWrite(_bIn1,0); ledcWrite(_bIn2,0);
+  #endif
+#else
+    // Simple digitalWrite motors
+    pinMode(_aIn1,OUTPUT); pinMode(_aIn2,OUTPUT);
+    pinMode(_bIn1,OUTPUT); pinMode(_bIn2,OUTPUT);
+    digitalWrite(_aIn1,LOW); digitalWrite(_aIn2,LOW);
+    digitalWrite(_bIn1,LOW); digitalWrite(_bIn2,LOW);
+#endif
+    Serial.println("[MOTORS] Ready");
+  }
+
+  // ── WiFi ──
+  if(_wifiMode==ControllerWiFiMode::AP){
+    WiFi.softAP(_ssid,_pass);
+    Serial.print("[WIFI] AP IP: ");
+    Serial.println(WiFi.softAPIP());
+  } else {
+    WiFi.begin(_ssid,_pass);
+    Serial.print("[WIFI] Connecting");
+    unsigned long t=millis();
+    while(WiFi.status()!=WL_CONNECTED && millis()-t<15000){
+      delay(500); Serial.print(".");
+    }
+    if(WiFi.status()==WL_CONNECTED){
+      Serial.println();
+      Serial.print("[WIFI] IP: "); Serial.println(WiFi.localIP());
+    } else {
+      Serial.println("\n[WIFI] Failed — AP fallback");
+      WiFi.softAP(_ssid,_pass);
+      Serial.print("[WIFI] AP IP: "); Serial.println(WiFi.softAPIP());
+    }
+  }
+
+  // ── mDNS ──
+  if(_mdnsOn){
+#ifdef BOARD_ESP8266
+    if(MDNS.begin(_mdnsHost, WiFi.localIP())){
+#else
+    if(MDNS.begin(_mdnsHost)){
+#endif
+      MDNS.addService("http","tcp",80);
+      Serial.printf("[mDNS] http://%s.local\n", _mdnsHost);
+    }
+  }
+
+  // ── Camera (ESP32-CAM only) ──
+#ifdef BOARD_ESP32CAM
+  if(!_initCamera()){
+    Serial.println("[CAM] FAILED — halting");
+#ifdef HAS_STATUS_LED
+    while(true){ _blinkStatus(1,100); delay(100); }
+#else
+    while(true){ delay(1000); }
+#endif
+    return false;
+  }
+#endif
+
+  // ── Web server ──
+  _server  = new AsyncWebServer(80);
+  _wsCtrl  = new AsyncWebSocket("/control");
+  _wsCtrl->onEvent(_onCtrlEvent);
+  _server->addHandler(_wsCtrl);
+
+#ifdef BOARD_ESP32CAM
+  _wsCamera = new AsyncWebSocket("/camera");
+  _wsCamera->onEvent(_onCamEvent);
+  _server->addHandler(_wsCamera);
+#endif
+
+  // HTTP fallback routes
+  _server->on("/up",   HTTP_GET,[](AsyncWebServerRequest*r){ instance()._handleCommand("up");   r->send(200,"text/plain","OK"); });
+  _server->on("/down", HTTP_GET,[](AsyncWebServerRequest*r){ instance()._handleCommand("down"); r->send(200,"text/plain","OK"); });
+  _server->on("/left", HTTP_GET,[](AsyncWebServerRequest*r){ instance()._handleCommand("left"); r->send(200,"text/plain","OK"); });
+  _server->on("/right",HTTP_GET,[](AsyncWebServerRequest*r){ instance()._handleCommand("right");r->send(200,"text/plain","OK"); });
+  _server->on("/stop", HTTP_GET,[](AsyncWebServerRequest*r){ instance()._handleCommand("stop"); r->send(200,"text/plain","OK"); });
+  _server->on("/joystick",HTTP_GET,[](AsyncWebServerRequest*req){
+    if(req->hasArg("x")&&req->hasArg("y")){
+      instance()._handleCommand("joy:"+req->arg("x")+","+req->arg("y"));
+      req->send(200,"text/plain","OK");
+    } else req->send(400,"text/plain","Missing x or y");
+  });
+#ifdef BOARD_ESP32CAM
+  _server->on("/cam",HTTP_GET,[](AsyncWebServerRequest*req){
+    ESPController& c=instance();
+    if(!c._sensor){ req->send(500,"text/plain","No camera"); return; }
+    if(req->hasArg("res"))     c._handleCommand("cam:res="+req->arg("res"));
+    if(req->hasArg("fps"))     c._handleCommand("cam:fps="+req->arg("fps"));
+    if(req->hasArg("quality")) c._handleCommand("cam:quality="+req->arg("quality"));
+#ifdef HAS_FLASH_LED
+    if(req->hasArg("flash"))   c._setFlash(constrain(req->arg("flash").toInt(),0,255));
+#endif
+    req->send(200,"text/plain","OK");
+  });
+#endif
+  _server->on("/status",HTTP_GET,[](AsyncWebServerRequest*req){
+    req->send(200,"application/json",instance().getStatusJSON());
+  });
+
+  _server->begin();
+  Serial.println("[HTTP] Server ready on port 80");
+
+#ifdef HAS_STATUS_LED
+  _blinkStatus(2,300);
+#endif
+  _lastCmdTime=millis();
+  Serial.println("[CTRL] Ready");
+  return true;
+}
+
+// ════════════════════════════════════════════════════════════
+//  UPDATE
+// ════════════════════════════════════════════════════════════
+void ESPController::update(){
+  unsigned long now=millis();
+
+  // Auto-release buttons
+  _checkButtonReleases();
+
+  // Motor watchdog
+  if(_watchdogMs>0 && _motorsEnabled && now-_lastCmdTime>_watchdogMs)
+    { _targetA=_targetB=0; }
+
+  // Soft acceleration
+  if(_motorsEnabled && now-_lastAccelTick>=_accelTickMs){
+    _lastAccelTick=now;
+    auto step=[](int cur,int tgt,int s)->int{
+      if(cur<tgt)return min(cur+s,tgt);
+      if(cur>tgt)return max(cur-s,tgt);
+      return cur;
+    };
+    int nA=step(_currentA,_targetA,_accelStep);
+    int nB=step(_currentB,_targetB,_accelStep);
+    if(nA!=_currentA){ _currentA=nA; _writeMotor(_aIn1,_aIn2,_currentA,_trimA); }
+    if(nB!=_currentB){ _currentB=nB; _writeMotor(_bIn1,_bIn2,_currentB,_trimB); }
+  }
+
+#ifdef BOARD_ESP32CAM
+  // Camera stream
+  if(_wsCamera && _wsCamera->count()>0 && now-_lastFrameTime>=_frameInterval){
+    _sendFrame(); _lastFrameTime=now;
+  }
+  if(_wsCamera) _wsCamera->cleanupClients();
+#endif
+
+  if(_wsCtrl) _wsCtrl->cleanupClients();
+
+  // Battery
+  _checkBattery();
+
+  // RSSI broadcast every 3s
+  if(_wsCtrl && _wsCtrl->count()>0 && now-_lastRssiTime>=3000){
+    _lastRssiTime=now;
+    _wsCtrl->textAll("rssi:"+String(getRSSI())+",q:"+String(getRSSIQuality()));
+  }
+
+#ifdef BOARD_ESP8266
+  // ESP8266 needs mDNS update called every loop
+  if(_mdnsOn) MDNS.update();
+#endif
 }
