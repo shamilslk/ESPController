@@ -2,14 +2,14 @@
 
 # ESPController
 
-**Universal ESP32-CAM / ESP32 / ESP8266 WebSocket controller library**
+**Universal ESP32-CAM / ESP32 / ESP32-S3 / ESP8266 WebSocket controller library**
 
 Control any ESP-based device wirelessly via WebSocket — rovers, camera turrets, anything.  
 Comes with a Flutter Android app featuring live camera feed, virtual joystick, D-Pad and camera settings.
 
 [![Download APK](https://img.shields.io/badge/Download-APK-green?style=for-the-badge&logo=android)](https://github.com/shamilslk/ESPController/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-ESP32%20%7C%20ESP8266-orange?style=for-the-badge)](.)
+[![Platform](https://img.shields.io/badge/Platform-ESP32%20%7C%20ESP32--CAM%20%7C%20ESP32--S3%20%7C%20ESP8266-orange?style=for-the-badge)](.)
 
 </div>
 
@@ -28,7 +28,8 @@ Comes with a Flutter Android app featuring live camera feed, virtual joystick, D
 - 🎮 **Virtual joystick** — smooth arcade-drive mixing
 - 🕹️ **D-Pad** — Forward / Backward / Left / Right + Emergency Stop
 - 📷 **Live camera stream** — real-time JPEG over WebSocket (ESP32-CAM)
-- 💡 **Flash LED control** — brightness slider in app
+- 💡 **Flash LED control** — brightness slider in app (flash LED or RGB NeoPixel)
+- 🌈 **RGB NeoPixel status LED** — addressable LED support (auto-enabled on ESP32-S3)
 - ⚙️ **Camera settings from app** — FPS, resolution (QVGA/VGA/SVGA), JPEG quality
 - 🔄 **Auto reconnect** — app reconnects automatically on drop
 - 📶 **RSSI broadcast** — signal quality shown in app every 3 seconds
@@ -36,6 +37,7 @@ Comes with a Flutter Android app featuring live camera feed, virtual joystick, D
 - 🚀 **Soft acceleration** — smooth speed ramp instead of jerky starts
 - 🌐 **mDNS support** — reach device at `http://devicename.local`
 - 🔋 **Battery monitor** — fires callback when voltage drops below threshold
+- 🔍 **Auto board detection** — no manual board selection needed for standard setups
 
 ---
 
@@ -53,11 +55,12 @@ The app connects to your ESP device over WiFi and gives you:
 
 ## 🔧 Supported Boards
 
-| Board | Camera | PWM Motors | Flash LED |
-|---|---|---|---|
-| AI Thinker ESP32-CAM | ✅ | ✅ | ✅ GPIO4 |
-| ESP32 DevKit / WROOM | ❌ | ✅ | optional |
-| ESP8266 NodeMCU / Wemos D1 | ❌ | ✅ (analogWrite) | optional |
+| Board | Camera | PWM Motors | Flash LED | RGB LED |
+|---|---|---|---|---|
+| AI Thinker ESP32-CAM | ✅ | ✅ LEDC | ✅ GPIO4 | — |
+| ESP32 DevKit / WROOM | ❌ | ✅ LEDC | optional | optional |
+| ESP32-S3 DevKitC | ❌ | ✅ LEDC | optional | ✅ GPIO48 (auto) |
+| ESP8266 NodeMCU / Wemos D1 | ❌ | ✅ analogWrite | optional | — |
 
 ---
 
@@ -82,16 +85,17 @@ Copy the `ESPController` folder into your Arduino `libraries/` directory.
 
 | Board | Package | URL |
 |---|---|---|
-| ESP32 / ESP32-CAM | `esp32` by Espressif | `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json` |
+| ESP32 / ESP32-S3 / ESP32-CAM | `esp32` by Espressif | `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json` |
 | ESP8266 | `esp8266` by ESP8266 Community | `https://arduino.esp8266.com/stable/package_esp8266com_index.json` |
 
 ### Libraries — install via Arduino Library Manager
 
 | Library | Required for |
 |---|---|
-| **AsyncTCP** by me-no-dev | ESP32 / ESP32-CAM |
+| **AsyncTCP** by me-no-dev | ESP32 / ESP32-S3 / ESP32-CAM |
 | **ESPAsyncTCP** by me-no-dev | ESP8266 |
 | **ESPAsyncWebServer** by me-no-dev | All boards |
+| **Adafruit NeoPixel** | ESP32-S3 (required — auto-enabled) and any board with `HAS_RGB_STATUS_LED` |
 
 Everything else (`WiFi`, `esp_camera`, `ESPmDNS`) comes bundled with the board packages.
 
@@ -99,32 +103,63 @@ Everything else (`WiFi`, `esp_camera`, `ESPmDNS`) comes bundled with the board p
 
 ## ⚡ Quick Start
 
-### Step 1 — Pick your board
+### Step 1 — Board selection (usually automatic)
 
-Open `ESPController.h` and uncomment **exactly one** board:
+The library auto-detects your board from the compiler toolchain — **you don't need to do anything** for standard setups:
+
+| Detected when | Board used |
+|---|---|
+| `ARDUINO_ARCH_ESP8266` set | ESP8266 |
+| `CONFIG_IDF_TARGET_ESP32S3` or `ARDUINO_ESP32S3_DEV` set | ESP32-S3 |
+| `BOARD_HAS_PSRAM` set (AI-Thinker CAM modules) | ESP32-CAM |
+| None of the above | ESP32 |
+
+If auto-detection picks the wrong board, override it in your `.ino` **before** the `#include`:
 
 ```cpp
-#define BOARD_ESP32CAM    // AI Thinker ESP32-CAM  ← default
+#define BOARD_ESP32CAM    // AI Thinker ESP32-CAM
 // #define BOARD_ESP32    // Any ESP32 without camera
+// #define BOARD_ESP32S3  // ESP32-S3 (e.g. ESP32-S3-DevKitC)
 // #define BOARD_ESP8266  // NodeMCU, Wemos D1, etc.
+#include <ESPController.h>
 ```
 
-Optional — only needed if not using ESP32-CAM:
+> Define exactly **one** board if overriding. Defining multiple is a compile-time error.
+
+### Optional feature flags
+
+Uncomment in your `.ino` **before** the `#include` only if needed. Many are auto-enabled (see board table above).
+
 ```cpp
-// #define USE_PWM_MOTORS      // PWM speed control (vs simple on/off)
-// #define HAS_FLASH_LED
-// #define FLASH_LED_PIN  4
-// #define HAS_STATUS_LED
-// #define STATUS_LED_PIN 33
+// #define USE_PWM_MOTORS          // LEDC / analogWrite speed control (vs simple on/off)
+
+// #define HAS_FLASH_LED           // board has a torch/flash LED
+// #define FLASH_LED_PIN  4        // which pin
+
+// #define HAS_STATUS_LED          // board has a status LED
+// #define STATUS_LED_PIN 33       // which pin
+
+// #define HAS_RGB_STATUS_LED      // addressable NeoPixel status LED
+// #define RGB_STATUS_LED_PIN 48   // which pin (auto-set to 48 on ESP32-S3)
 ```
-> `BOARD_ESP32CAM` enables `USE_PWM_MOTORS`, `HAS_FLASH_LED` and `HAS_STATUS_LED` automatically.
+
+For ESP32-CAM you can also override the default AI-Thinker camera pin mapping:
+```cpp
+// #define CAM_PIN_PWDN  32
+// #define CAM_PIN_XCLK   0
+// #define CAM_PIN_SIOD  26
+// ... (see ESPController.h for the full list)
+```
+
+> `BOARD_ESP32CAM` auto-enables `USE_PWM_MOTORS`, `HAS_FLASH_LED`, and `HAS_STATUS_LED`.  
+> `BOARD_ESP32S3` auto-enables `HAS_RGB_STATUS_LED` on GPIO 48.
 
 ---
 
 ### Step 2 — Write your sketch
 
 ```cpp
-#include "ESPController.h"
+#include <ESPController.h>
 
 void setup() {
   Serial.begin(115200);
@@ -145,7 +180,7 @@ void setup() {
   Controller.setAcceleration(20, 20);            // step, tickMs
   Controller.setMotorTrim(MotorSide::LEFT, 0);   // drift fix
 
-  // D-Pad — state is HIGH when pressed, LOW when released
+  // D-Pad — state is HIGH when pressed, LOW auto-fired after 300ms
   Controller.onUp([](uint8_t state) {
     if (state == HIGH) { Controller.setMotorA( 255); Controller.setMotorB( 255); }
     else               { Controller.stopMotors(); }
@@ -196,6 +231,8 @@ Controller.setWiFi("YourRouterSSID", "RouterPassword", ControllerWiFiMode::STA);
 ```
 Then check Serial Monitor for the assigned IP and enter it in the app settings.
 
+> **STA fallback:** if connection is not established within 15 seconds, the library automatically falls back to AP mode.
+
 ---
 
 ## 🔌 Wiring
@@ -234,14 +271,14 @@ These GPIOs are **free** for motors and other use:
 | Function | Description |
 |---|---|
 | `Controller.setWiFi(ssid, pass)` | AP mode — creates hotspot |
-| `Controller.setWiFi(ssid, pass, ControllerWiFiMode::STA)` | STA mode — joins router |
+| `Controller.setWiFi(ssid, pass, ControllerWiFiMode::STA)` | STA mode — joins router (falls back to AP on failure) |
 | `Controller.setMDNS("name")` | Reach device at `http://name.local` |
 | `Controller.setMotorAPins(in1, in2)` | Motor A GPIO pins |
 | `Controller.setMotorBPins(in1, in2)` | Motor B GPIO pins |
-| `Controller.setMaxSpeed(0-255)` | Global speed cap |
+| `Controller.setMaxSpeed(0-255)` | Global speed cap (applied after trim) |
 | `Controller.setMotorTrim(MotorSide::LEFT, -100 to +100)` | Fix drift |
 | `Controller.setWatchdogTimeout(ms)` | Auto-stop if app goes silent. 0 = disabled |
-| `Controller.setAcceleration(step, tickMs)` | Ramp speed. 255 = instant |
+| `Controller.setAcceleration(step, tickMs)` | Ramp speed. 255 step = instant |
 
 ### Callbacks
 
@@ -267,7 +304,18 @@ These GPIOs are **free** for motors and other use:
 | `Controller.setMotorA(speed)` | −255 to +255. Trim + maxSpeed + ramp applied |
 | `Controller.setMotorB(speed)` | same for motor B |
 | `Controller.stopMotors()` | Gradual stop — respects acceleration ramp |
-| `Controller.emergencyStop()` | Instant cut — bypasses ramp, also kills flash |
+| `Controller.emergencyStop()` | Instant cut — bypasses ramp, also kills flash / RGB LED |
+
+### RGB LED helpers
+
+Available on `BOARD_ESP32S3` (auto-enabled on GPIO 48) and any board with `HAS_RGB_STATUS_LED` defined.
+
+| Function | Description |
+|---|---|
+| `Controller.setRGB(r, g, b)` | Set NeoPixel colour — r/g/b each 0–255 |
+| `Controller.setRGBOff()` | Turn NeoPixel off |
+
+> Safe to call before `Controller.begin()` — hardware is lazily initialised on first use.
 
 ### Connectivity
 
@@ -276,6 +324,9 @@ These GPIOs are **free** for motors and other use:
 | `Controller.getRSSI()` | Signal in dBm (e.g. −65) |
 | `Controller.getRSSIQuality()` | 0–100 score |
 | `Controller.getStatusJSON()` | Full status as JSON string |
+
+`getStatusJSON()` always includes: `ip`, `rssi`, `rssi_quality`, `ctrl_clients`, `max_speed`.  
+Additional fields by feature: `cam_clients` + `fps` (ESP32-CAM), `flash` (any board with `HAS_FLASH_LED`).
 
 ### Lifecycle
 
@@ -292,17 +343,21 @@ You never write code for these — the library and app handle them together:
 
 | Feature | Detail |
 |---|---|
-| Flash LED | App camera settings → `flash:180` → library sets brightness |
-| Camera FPS | App sends `cam:fps=20` → library applies it |
-| Camera resolution | App sends `cam:res=VGA` → QVGA / VGA / SVGA |
-| JPEG quality | App sends `cam:quality=10` → library applies it |
+| Flash LED | App sends `flash:180` → library sets brightness via LEDC / analogWrite |
+| RGB NeoPixel | `flash:` command also drives NeoPixel as white on boards with `HAS_RGB_STATUS_LED` |
+| Camera FPS | App sends `cam:fps=20` → library applies it (ESP32-CAM only) |
+| Camera resolution | App sends `cam:res=VGA` → QVGA / VGA / SVGA (ESP32-CAM only) |
+| JPEG quality | App sends `cam:quality=10` → library applies it (ESP32-CAM only) |
 | RSSI broadcast | Sends `rssi:-65,q:70` to app every 3 seconds |
-| Button auto-release | `LOW` fired automatically 300ms after press |
-| Emergency stop | Called automatically on controller disconnect |
+| Button auto-release | `LOW` fired automatically 300ms after last press |
+| Emergency stop | Called automatically on controller disconnect; kills flash / RGB LED |
+| Watchdog | Motors zeroed if no command received within `setWatchdogTimeout()` ms |
 | WebSocket cleanup | Stale clients cleaned up every loop |
-| mDNS update | `MDNS.update()` called automatically on ESP8266 |
+| mDNS update | `MDNS.update()` called automatically in `update()` on ESP8266 |
 | HTTP fallback | `/up` `/down` `/left` `/right` `/stop` `/joystick` `/cam` `/status` |
 | Serial logging | Connect/disconnect/commands printed automatically |
+| STA → AP fallback | Falls back to AP mode if STA connection fails within 15 s |
+| Status LED blink | 2 blinks on successful `begin()`; rapid blink on ESP32-CAM camera fault |
 
 ---
 
@@ -320,12 +375,13 @@ Upload these in order when building a new rover:
 | `example6_full_rover` | Everything together — final sketch | Complete rover |
 | `example_esp32cam_rover` | Library example for ESP32-CAM | Complete rover |
 | `example_esp32_rover` | Library example for plain ESP32 | ESP32 + motors |
+| `example_esp32s3_rover` | Library example for ESP32-S3 | ESP32-S3 + motors |
 | `example_esp8266` | Library example for ESP8266 | ESP8266 + motors |
 
 **Expected Serial Monitor output on boot:**
 ```
-[CTRL] Starting ESPController...
-[MOTORS] PWM ready
+[CTRL] ESPController starting...
+[MOTORS] Ready
 [WIFI] AP IP: 192.168.4.1
 [CAM] OK
 [HTTP] Server ready on port 80
@@ -333,7 +389,7 @@ Upload these in order when building a new rover:
 ```
 Then when app connects:
 ```
-[CTRL] App connected!
+[CTRL] App connected
 ```
 
 ---
@@ -341,8 +397,8 @@ Then when app connects:
 ## ❓ Troubleshooting
 
 **Camera init failed / rapid LED blink on boot**
-- Wrong board selected in `ESPController.h` — make sure `#define BOARD_ESP32CAM` is set
-- Power issue — ESP32-CAM needs a stable 5V supply. USB from PC is often not enough. Use a phone charger or dedicated 5V supply.
+- Wrong board selected — make sure `BOARD_ESP32CAM` is active (or let auto-detection run)
+- Power issue — ESP32-CAM needs a stable 5V supply. USB from PC is often not enough. Use a phone charger or dedicated 5V supply
 - Bad USB cable — try a different cable
 
 **Motors spin wrong direction**
@@ -357,6 +413,14 @@ Then when app connects:
 - Make sure phone is connected to `MY_DEVICE` hotspot, not your home router
 - Check IP in app settings matches your ESP IP
 - Restart the ESP and reconnect
+
+**Compilation error: "undefined reference" or "multiple definition"**
+- Make sure you are not defining more than one board macro
+- If you defined a board manually, verify it matches the board selected in Arduino IDE → Tools → Board
+
+**NeoPixel / RGB LED not lighting up (ESP32-S3)**
+- Adafruit NeoPixel library must be installed — install it via Arduino Library Manager
+- GPIO 48 is the default; override with `#define RGB_STATUS_LED_PIN <pin>` before the `#include` if your board differs
 
 **Short WiFi range**
 - AI Thinker ESP32-CAM has a U.FL/IPEX connector for an external antenna
