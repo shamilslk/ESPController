@@ -1,11 +1,11 @@
-/*
- * ============================================================
- *  ESPController.cpp
- *  Part of ESPController Library by Shamil K, Vismaya P
- *  https://github.com/shamilslk/ESPController
- *  Version : 2.0.0
- * ============================================================
- */
+//
+//============================================================
+//  ESPController.cpp
+//  Part of ESPController Library by Shamil K, Vismaya P
+//  https://github.com/shamilslk/ESPController
+//  Version : 2.0.0
+// ============================================================
+//
 
 
 // ============================================================
@@ -234,6 +234,24 @@ void ESPController::_blinkStatus(int n, int ms) {
 #endif // HAS_STATUS_LED
 
 // ════════════════════════════════════════════════════════════
+//  RGB STATUS LED  (e.g. ESP32-S3 onboard NeoPixel, GPIO48)
+//  Compiled only when HAS_RGB_STATUS_LED is defined.
+//  setRGB()    — set an explicit colour (r, g, b each 0-255)
+//  setRGBOff() — convenience wrapper to turn the LED off
+// ════════════════════════════════════════════════════════════
+#ifdef HAS_RGB_STATUS_LED
+void ESPController::setRGB(uint8_t r, uint8_t g, uint8_t b) {
+  if (!_rgbInited) {       // safe to call setRGB() before Controller.begin() —
+    _rgbStatus.begin();    // this lazily does the one-time hardware init
+    _rgbInited = true;     // instead of requiring begin() to have run first
+  }
+  _rgbStatus.setPixelColor(0, _rgbStatus.Color(r, g, b));
+  _rgbStatus.show();
+}
+void ESPController::setRGBOff() { setRGB(0, 0, 0); }
+#endif // HAS_RGB_STATUS_LED
+
+// ════════════════════════════════════════════════════════════
 //  CAMERA  — ESP32-CAM only
 //  Nothing in this block compiles on ESP32 / ESP32-S3 / ESP8266.
 // ════════════════════════════════════════════════════════════
@@ -362,22 +380,18 @@ void ESPController::_handleCommand(const String& msg) {
   }
 
   // ── Flash LED  "flash:<0-255>"  ─────────────────────────
-  // Available on any board that has HAS_FLASH_LED defined.
-#ifdef HAS_FLASH_LED
-  if (msg.startsWith("flash:")) {
-    _setFlash(msg.substring(6).toInt());
-    return;
-  }
-#endif
-
-  // ── RGB status LED used as flash substitute "flash:<0-255>" ──
-  // App only sends a single brightness value; we feed it into R, G, B
-  // equally so 255 = white, 0 = off (e.g. ESP32-S3 with no real flash LED).
-#ifdef HAS_RGB_STATUS_LED
+  // HAS_FLASH_LED  → drives the white flash LED via ledcWrite / analogWrite
+  // HAS_RGB_STATUS_LED → drives the NeoPixel as a white-balance substitute
+  // Both can be active at the same time (unlikely in practice but handled).
+#if defined(HAS_FLASH_LED) || defined(HAS_RGB_STATUS_LED)
   if (msg.startsWith("flash:")) {
     int v = constrain(msg.substring(6).toInt(), 0, 255);
-    _rgbStatus.setPixelColor(0, _rgbStatus.Color(v, v, v));
-    _rgbStatus.show();
+    #ifdef HAS_FLASH_LED
+      _setFlash(v);
+    #endif
+    #ifdef HAS_RGB_STATUS_LED
+      setRGB(v, v, v);   // equal R/G/B → white at the requested brightness
+    #endif
     return;
   }
 #endif
@@ -469,10 +483,15 @@ bool ESPController::begin() {
 #endif
 
   // ── RGB Status LED ──────────────────────────────────────
+  // Only does the one-time hardware init here, and only if setRGB()
+  // hasn't already done it. Deliberately does NOT force the LED to
+  // off/black — if your .ino already called setRGB() before begin(),
+  // that colour is left exactly as you set it.
 #ifdef HAS_RGB_STATUS_LED
-  _rgbStatus.begin();
-  _rgbStatus.setPixelColor(0, _rgbStatus.Color(0, 0, 0));
-  _rgbStatus.show();
+  if (!_rgbInited) {
+    _rgbStatus.begin();
+    _rgbInited = true;
+  }
 #endif
 
   // ── Flash LED init ──────────────────────────────────────
@@ -604,16 +623,29 @@ bool ESPController::begin() {
     }
   });
 
-  // /cam settings route — ESP32-CAM only
-#ifdef BOARD_ESP32CAM
+  // /cam route — registered on EVERY board.
+  // The app sends flash/RGB brightness through this same endpoint
+  // regardless of board, so it must exist even when there's no
+  // camera. Camera-only params (res/fps/quality) are simply no-ops
+  // on non-camera boards, and only act when a sensor is present.
+#if defined(BOARD_ESP32CAM) || defined(HAS_FLASH_LED) || defined(HAS_RGB_STATUS_LED)
   _server->on("/cam", HTTP_GET, [](AsyncWebServerRequest* req) {
     ESPController& c = instance();
-    if (!c._sensor) { req->send(500, "text/plain", "No camera"); return; }
-    if (req->hasArg("res"))     c._handleCommand("cam:res="     + req->arg("res"));
-    if (req->hasArg("fps"))     c._handleCommand("cam:fps="     + req->arg("fps"));
-    if (req->hasArg("quality")) c._handleCommand("cam:quality=" + req->arg("quality"));
+#ifdef BOARD_ESP32CAM
+    if (c._sensor) {
+      if (req->hasArg("res"))     c._handleCommand("cam:res="     + req->arg("res"));
+      if (req->hasArg("fps"))     c._handleCommand("cam:fps="     + req->arg("fps"));
+      if (req->hasArg("quality")) c._handleCommand("cam:quality=" + req->arg("quality"));
+    }
+#endif
 #ifdef HAS_FLASH_LED
     if (req->hasArg("flash"))   c._setFlash(constrain(req->arg("flash").toInt(), 0, 255));
+#endif
+#ifdef HAS_RGB_STATUS_LED
+    if (req->hasArg("flash")) {
+      int v = constrain(req->arg("flash").toInt(), 0, 255);
+      c.setRGB(v, v, v);   // equal R/G/B → white at the requested brightness
+    }
 #endif
     req->send(200, "text/plain", "OK");
   });
