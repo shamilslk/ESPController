@@ -1,4 +1,3 @@
-
 /*
  * ============================================================
  *  ESPController Library
@@ -52,12 +51,37 @@
 #pragma once
 
 // ============================================================
+//  Pull in Arduino's own headers FIRST, before any board
+//  detection runs below.
+//
+//  WHY THIS MATTERS: this header is processed independently by
+//  EVERY .cpp file that includes it — your sketch's .ino *and*
+//  this library's own ESPController.cpp. Arduino's build system
+//  automatically prepends "#include <Arduino.h>" to your .ino
+//  before anything else, so by the time your .ino reaches this
+//  header, chip-target macros like CONFIG_IDF_TARGET_ESP32S3 are
+//  already visible. ESPController.cpp gets NO such automatic
+//  prepend, though — so without this line, the board auto-
+//  detection below could silently disagree between your .ino and
+//  this library's .cpp, declaring functions in one file and never
+//  defining them in the other (classic "undefined reference"
+//  linker error). Including Arduino.h here guarantees both files
+//  see an identical, correct board determination.
+// ============================================================
+#include <Arduino.h>
+
+// ============================================================
 //  GUARD: exactly one board must be defined
 // ============================================================
 #if defined(ARDUINO_ARCH_ESP8266)
   #define BOARD_ESP8266
 
-#elif defined(CONFIG_IDF_TARGET_ESP32S3)
+#elif defined(CONFIG_IDF_TARGET_ESP32S3) || defined(ARDUINO_ESP32S3_DEV)
+  // CONFIG_IDF_TARGET_ESP32S3 comes from sdkconfig.h (pulled in above
+  // via Arduino.h). ARDUINO_ESP32S3_DEV is a belt-and-suspenders
+  // backup: it's injected directly as a compiler -D flag for this
+  // FQBN, so it stays visible even if a toolchain update ever changes
+  // how/when sdkconfig.h gets included.
   #define BOARD_ESP32S3
 
 #elif defined(BOARD_HAS_PSRAM)
@@ -144,8 +168,8 @@
 //  ESP32-S3: built-in addressable RGB status LED on GPIO48
 // ============================================================
 #ifdef BOARD_ESP32S3
-  #ifndef HAS_RGB_STATUS_LED
-    #define HAS_RGB_STATUS_LED
+  #define HAS_RGB_STATUS_LED
+  #ifndef RGB_STATUS_LED_PIN
     #define RGB_STATUS_LED_PIN 48
   #endif
 #endif
@@ -195,7 +219,6 @@
 #endif
 
 #include <ESPAsyncWebServer.h>
-#include <Arduino.h>
 
 // ============================================================
 //  Callback types
@@ -374,7 +397,21 @@ private:
   // ── RGB Status LED (e.g. ESP32-S3 onboard NeoPixel, GPIO48) ──
 #ifdef HAS_RGB_STATUS_LED
   Adafruit_NeoPixel _rgbStatus = Adafruit_NeoPixel(1, RGB_STATUS_LED_PIN, NEO_GRB + NEO_KHZ800);
+  bool _rgbInited = false;   // tracks whether _rgbStatus.begin() has run yet,
+                             // so setRGB() works even if called before begin()
 #endif
+
+public:
+#ifdef HAS_RGB_STATUS_LED
+  /** Set the onboard RGB status LED to an explicit colour.
+   *  r/g/b are 0-255 each. Call from your .ino at any time after begin(). */
+  void setRGB(uint8_t r, uint8_t g, uint8_t b);
+
+  /** Convenience: turn the RGB LED off. */
+  void setRGBOff();
+#endif
+
+private:
 
   // ── Web server ──────────────────────────────────────────
   AsyncWebServer* _server  = nullptr;
